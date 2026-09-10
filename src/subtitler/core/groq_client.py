@@ -36,6 +36,33 @@ URL_MODELOS = "https://api.groq.com/openai/v1/models"
 MODELO_PADRAO = "whisper-large-v3"
 MODELOS = ("whisper-large-v3", "whisper-large-v3-turbo")
 
+#: O `verbose_json` devolve o idioma detectado por extenso e em ingles
+#: ("portuguese"), mas o campo `language` da requisicao quer o codigo ISO-639-1.
+#: Sem esta traducao nao da para reaproveitar a deteccao de uma fatia na
+#: seguinte.
+_CODIGO_POR_NOME = {
+    "portuguese": "pt", "english": "en", "spanish": "es", "french": "fr",
+    "german": "de", "italian": "it", "japanese": "ja", "korean": "ko",
+    "chinese": "zh", "russian": "ru", "dutch": "nl", "polish": "pl",
+    "turkish": "tr", "arabic": "ar", "hindi": "hi", "indonesian": "id",
+    "galician": "gl", "catalan": "ca",
+}
+
+
+def codigo_de_idioma(bruto: object) -> str:
+    """Normaliza o que a API devolveu para um codigo ISO-639-1, ou "" .
+
+    Devolve string vazia quando nao reconhece -- o chamador entao continua em
+    "auto", que e pior mas nunca errado.
+    """
+    if not isinstance(bruto, str):
+        return ""
+    valor = bruto.strip().lower()
+    if len(valor) == 2 and valor.isalpha():
+        return valor
+    return _CODIGO_POR_NOME.get(valor, "")
+
+
 #: 25 MB no plano gratuito. Ficamos abaixo para ter folga.
 LIMITE_BYTES = 24 * 1024 * 1024
 

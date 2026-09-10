@@ -25,6 +25,7 @@ from subtitler.core.ffmpeg_locator import Ferramentas
 from subtitler.core.groq_client import (
     GroqClient,
     LimiteDeUso,
+    codigo_de_idioma,
     esperar_com_cancelamento,
 )
 from subtitler.core.paths import jobs_dir
@@ -138,6 +139,12 @@ def run_job(
     # --- 4. transcrever ---------------------------------------------------
     partes: list[Transcript] = []
     cortes_duros = {f.indice for f in fatias if f.corte_duro}
+    # Em "auto" o Whisper detecta o idioma DE CADA FATIA, isolada. Num VOD
+    # dividido em 18 partes ele pode decidir "espanhol" ou "galego" num trecho
+    # de portugues -- e o resultado sai cheio de palavra trocada, sem erro
+    # nenhum aparecendo. Fixamos o que a primeira fatia detectou e mandamos
+    # explicito nas seguintes.
+    idioma_efetivo = job.idioma
 
     for posicao, fatia in enumerate(fatias):
         checar_cancelamento()
@@ -153,7 +160,9 @@ def run_job(
         cache = pasta / "partes" / f"{fatia.indice}.json"
         if cache.exists():
             # Retomada: esta parte ja foi transcrita numa tentativa anterior.
-            partes.append(from_verbose_json(json.loads(cache.read_text("utf-8")), fatia.start))
+            guardado = json.loads(cache.read_text("utf-8"))
+            idioma_efetivo = _fixar_idioma(idioma_efetivo, guardado)
+            partes.append(from_verbose_json(guardado, fatia.start))
             continue
 
         if len(fatias) == 1:
@@ -164,11 +173,12 @@ def run_job(
                 media.slice_flac(ferramentas, master, pedaco, fatia.start, fatia.end, parar)
 
         bruto = _transcrever_com_paciencia(
-            cliente, pedaco, job, parar, aviso_de_espera,
+            cliente, pedaco, job, idioma_efetivo, parar, aviso_de_espera,
             lambda enviados, total: relatar(
                 _fase(base, proximo, (enviados / total) if total else 0.0), rotulo
             ),
         )
+        idioma_efetivo = _fixar_idioma(idioma_efetivo, bruto)
         cache.write_text(json.dumps(bruto, ensure_ascii=False), encoding="utf-8")
         partes.append(from_verbose_json(bruto, fatia.start))
 
@@ -210,10 +220,24 @@ def run_job(
     )
 
 
+def _fixar_idioma(atual: str, resposta: object) -> str:
+    """Troca "auto" pelo idioma que a API acabou de detectar.
+
+    So age uma vez: assim que ha um codigo, ele vale para todas as fatias
+    seguintes. Se a API devolver algo que nao reconhecemos, continua em "auto".
+    """
+    if atual and atual != "auto":
+        return atual
+    if not isinstance(resposta, dict):
+        return atual
+    return codigo_de_idioma(resposta.get("language")) or atual
+
+
 def _transcrever_com_paciencia(
     cliente: GroqClient,
     audio: Path,
     job: Job,
+    idioma: str,
     parar: Callable[[], bool],
     aviso: Optional[Aviso],
     progresso_upload,
@@ -227,7 +251,7 @@ def _transcrever_com_paciencia(
     while True:
         try:
             return cliente.transcribe(
-                audio, idioma=job.idioma, prompt=job.prompt,
+                audio, idioma=idioma, prompt=job.prompt,
                 progresso=progresso_upload, cancelar=parar,
             )
         except LimiteDeUso as limite:

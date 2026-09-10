@@ -20,7 +20,7 @@ from subtitler.core.paths import settings_path
 PADRAO: dict[str, Any] = {
     "api_key": "",
     "model": "whisper-large-v3",
-    "language": "auto",
+    "language": "pt",
     "formats": ["srt"],
     "output_dir": "",
     "prompt": "",
