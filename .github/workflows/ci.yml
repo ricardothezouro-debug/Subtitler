@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    # Windows e macOS sao requisito de aceitacao do padrao de plugins, nao
+    # "seria bom". Os bugs de plataforma nao aparecem no sistema em que se
+    # desenvolve -- e por isso que a matriz existe.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Compilar (syntax check)
+        run: python -m compileall -q src
+
+      - name: Rodar testes
+        run: python -m pytest -q
+
+      - name: Smoke test da página (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: src
+        run: python scripts/smoke_test.py
+
+  # Simula o interpretador congelado do Sidekick: so PySide6 e pytest. E onde um
+  # `import requests` esquecido apareceria -- no ambiente normal ele passa, e o
+  # erro so surgiria na maquina do usuario.
+  sem-dependencias:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install PySide6 pytest
+      - run: python -m pytest tests/test_guardrails.py -q
