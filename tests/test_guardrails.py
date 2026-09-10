@@ -131,12 +131,19 @@ def test_sem_caminho_de_windows_em_texto():
     assert not ofensores, f"caminho de Windows em texto: {ofensores}"
 
 
-def test_sem_os_startfile():
-    """Armadilha 3: nao existe fora do Windows (`AttributeError`)."""
+def test_os_startfile_so_dentro_de_check_de_plataforma():
+    """Armadilha 3: nao existe fora do Windows (`AttributeError`).
+
+    Como no `creationflags`, o que importa nao e a ausencia da chamada e sim a
+    guarda: usar `os.startfile` dentro de um `if sys.platform == "win32"` e
+    correto, e e o que o proprio Sidekick faz no `platform_utils.open_path`.
+    """
     for caminho in modulos():
         texto = caminho.read_text(encoding="utf-8")
-        assert "os.startfile" not in texto, (
-            f"{caminho.name}: use platform_utils.open_path"
+        if "os.startfile" not in texto:
+            continue
+        assert 'sys.platform == "win32"' in texto, (
+            f"{caminho.name}: os.startfile precisa de guarda de plataforma"
         )
 
 
