@@ -57,7 +57,21 @@ class Job:
 
     @property
     def id(self) -> str:
-        digest = hashlib.sha1(str(self.origem).encode("utf-8")).hexdigest()[:10]
+        """Identifica o trabalho -- e, com ele, o cache que pode ser retomado.
+
+        Entra tudo o que muda a TRANSCRICAO: o arquivo, o modelo, o idioma e os
+        termos. Antes era so o caminho do arquivo, e isso enganava feio: trocar
+        para o modelo preciso e rodar de novo devolvia o resultado antigo em
+        dois segundos, porque as partes em cache eram reaproveitadas como se
+        nada tivesse mudado. O usuario mexia nas opcoes e nada acontecia.
+
+        Formato de saida e regras de legenda ficam DE FORA de proposito: mudar
+        de SRT para VTT nao deve custar uma transcricao nova.
+        """
+        assinatura = "\n".join(
+            [str(self.origem), self.modelo, self.idioma, self.prompt]
+        )
+        digest = hashlib.sha1(assinatura.encode("utf-8")).hexdigest()[:10]
         return f"{self.origem.stem[:32]}-{digest}"
 
 
@@ -210,6 +224,12 @@ def run_job(
         destino = _destino_livre(job.saida, job.origem.stem, formato)
         opcoes = {"com_tempos": job.txt_com_tempos} if formato == "txt" else {}
         arquivos.append(formats.write(cues, destino, formato, **opcoes))
+
+    # O master.flac e o unico arquivo grande aqui (~1 MB por minuto de video).
+    # limpar_job() existia para isso e nunca era chamado por ninguem, entao cada
+    # transcricao deixava o audio inteiro no disco para sempre. Os JSONs ficam:
+    # sao pequenos e sao o que permite retomar sem reenviar nada.
+    master.unlink(missing_ok=True)
 
     relatar(100, "Pronto.")
     return Resultado(
