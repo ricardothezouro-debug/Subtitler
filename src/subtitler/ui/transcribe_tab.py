@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -30,8 +31,8 @@ from subtitler.ui.components import NeonPanel, NeonProgressBar
 from subtitler.ui.workers import ProbeWorker, TranscribeWorker
 
 IDIOMAS = [
-    ("Detectar automaticamente", "auto"),
     ("Português", "pt"),
+    ("Detectar automaticamente (menos preciso)", "auto"),
     ("Inglês", "en"),
     ("Espanhol", "es"),
     ("Francês", "fr"),
@@ -159,7 +160,7 @@ class TranscribeTab(QWidget):
         self.combo_idioma = QComboBox()
         for rotulo, codigo in IDIOMAS:
             self.combo_idioma.addItem(rotulo, codigo)
-        salvo = self.settings.get("language", "auto")
+        salvo = self.settings.get("language", "pt")
         indice = self.combo_idioma.findData(salvo)
         self.combo_idioma.setCurrentIndex(max(0, indice))
         self.combo_idioma.currentIndexChanged.connect(
@@ -191,8 +192,41 @@ class TranscribeTab(QWidget):
             check.toggled.connect(self._formatos_mudaram)
             self.checks[nome] = check
             formatos.addWidget(check)
+
+        # O core sempre soube escrever o TXT com horario na frente de cada
+        # paragrafo, mas nao havia controle nenhum para ligar isso -- a opcao
+        # ficava presa no valor padrao (desligado).
+        formatos.addSpacing(20)
+        self.check_tempos = QCheckBox("TXT com horário das falas")
+        self.check_tempos.setToolTip(
+            "Prefixa cada parágrafo com [hh:mm:ss] no arquivo .txt."
+        )
+        self.check_tempos.setChecked(bool(self.settings.get("txt_com_tempos", False)))
+        self.check_tempos.toggled.connect(
+            lambda ligado: self.settings.set("txt_com_tempos", bool(ligado))
+        )
+        formatos.addWidget(self.check_tempos)
         formatos.addStretch(1)
         caixa.addLayout(formatos)
+        self._atualizar_check_tempos()
+
+        # Nome de jogo e apelido sao o que mais sai errado, e a correcao mora
+        # noutra aba -- sem um empurrao aqui o usuario nao liga uma coisa na
+        # outra e conclui que a transcricao e ruim.
+        linha_dica = QHBoxLayout()
+        self.dica_termos = QPushButton(
+            "Nomes de jogos ou apelidos saindo errado? Cadastre-os em Termos e nomes →"
+        )
+        self.dica_termos.setObjectName("Muted")
+        self.dica_termos.setFlat(True)
+        self.dica_termos.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.dica_termos.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
+        self.dica_termos.clicked.connect(self.pedir_configuracoes.emit)
+        linha_dica.addWidget(self.dica_termos)
+        linha_dica.addStretch(1)
+        caixa.addLayout(linha_dica)
 
         saida = QHBoxLayout()
         escolher_pasta = QPushButton("Escolher pasta…")
@@ -207,7 +241,13 @@ class TranscribeTab(QWidget):
     def _formatos_mudaram(self) -> None:
         escolhidos = [nome for nome, check in self.checks.items() if check.isChecked()]
         self.settings.set("formats", escolhidos)
+        self._atualizar_check_tempos()
         self._atualizar_botao()
+
+    def _atualizar_check_tempos(self) -> None:
+        """O horario no TXT so existe se o TXT for gerado."""
+        ligado = self.checks["txt"].isChecked()
+        self.check_tempos.setEnabled(ligado)
 
     def _escolher_pasta(self) -> None:
         inicial = str(self.pasta_saida or Path.home())
@@ -401,6 +441,7 @@ class TranscribeTab(QWidget):
             self.aviso.setVisible(True)
         else:
             self.aviso.setVisible(False)
+        self.dica_termos.setVisible(not self.settings.prompt.strip())
         self._atualizar_botao()
 
     def _atualizar_botao(self) -> None:

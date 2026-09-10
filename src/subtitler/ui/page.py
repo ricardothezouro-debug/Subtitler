@@ -56,6 +56,11 @@ class SubtitlerPage(QWidget):
         self.aba_transcrever.pedir_configuracoes.connect(
             lambda: self.abas.setCurrentIndex(1)
         )
+        # Voltar de Configuracoes tem de reavaliar os avisos: os termos podem
+        # ter acabado de ser cadastrados.
+        self.abas.currentChanged.connect(
+            lambda indice: indice == 0 and self.aba_transcrever.checar_precondicoes()
+        )
 
         QTimer.singleShot(0, self.aba_transcrever.checar_precondicoes)
 
