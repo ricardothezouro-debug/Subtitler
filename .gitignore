@@ -1,0 +1,18 @@
+# Chaves e segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+release/
+*.egg-info/
+.pytest_cache/
+
+# Dados de execução local
+.subtitler/
+jobs/
+bin/
