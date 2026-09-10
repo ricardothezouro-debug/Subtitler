@@ -18,7 +18,9 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1] / "src" / "subtitler"
 
 # O que o interpretador congelado do Sidekick realmente tem.
-PERMITIDOS = {"PySide6", "subtitler"}
+# certifi entra porque o Sidekick passou a embarca-lo na v0.7.1 (esta no .spec)
+# -- e, mesmo assim, nosso import dele fica dentro de try/except.
+PERMITIDOS = {"PySide6", "subtitler", "certifi"}
 
 
 def modulos(subpasta: str = "") -> list[Path]:

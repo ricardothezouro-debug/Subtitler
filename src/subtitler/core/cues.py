@@ -20,7 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Optional, Sequence
 
-from subtitler.core.linebreak import MAX_CHARS_POR_LINHA, best_split, normalizar, wrap
+from subtitler.core.linebreak import (
+    MAX_CHARS_POR_LINHA,
+    PROIBIDO,
+    best_split,
+    normalizar,
+    peso_sintatico,
+    wrap,
+)
 from subtitler.core.transcript import Word
 
 _FIM_DE_FRASE = (".", "!", "?", "…")
@@ -91,14 +98,75 @@ def _texto(palavras: Sequence[Word]) -> str:
     return normalizar(" ".join(p.text for p in palavras))
 
 
+def _fronteira_ruim(grupo: Sequence[Word], proxima: Optional[Word]) -> bool:
+    """Terminar a legenda aqui separaria coisas que se leem juntas?
+
+    As mesmas proibicoes da quebra de linha valem entre legendas -- terminar em
+    "R$" ou em "em" e pior do que quebrar a linha ali, porque a continuacao so
+    aparece depois que a legenda inteira trocar.
+    """
+    if not grupo or proxima is None:
+        return False
+    return peso_sintatico(grupo[-1].text, proxima.text) == PROIBIDO
+
+
+def _recuar_para_boa_fronteira(
+    grupo: list[Word], seguinte: Optional[Word], regras: CueRules
+) -> int:
+    """Quantas palavras devolver para o proximo grupo, buscando bom corte.
+
+    Fechar exatamente onde estourou o limite quase sempre corta no meio de uma
+    ideia. Recuamos ate encontrar uma fronteira sintatica boa, contanto que
+    sobre texto suficiente -- abaixo de ~55%% do limite a legenda fica picotada.
+    """
+    if len(grupo) < 2:
+        return 0
+
+    minimo = int(regras.max_chars_per_cue * 0.55)
+    melhor_recuo = 0
+    melhor_peso = PROIBIDO
+
+    # Tenta terminar em cada uma das ultimas palavras, da mais tardia para a
+    # mais recuada -- assim, em caso de empate, mantem a legenda mais cheia.
+    for recuo in range(0, min(len(grupo) - 1, 8)):
+        fim = len(grupo) - recuo
+        candidato = grupo[:fim]
+        if len(_texto(candidato)) < minimo:
+            break
+        proxima = grupo[fim] if fim < len(grupo) else seguinte
+        if proxima is None:
+            peso = 0.0
+        else:
+            peso = peso_sintatico(candidato[-1].text, proxima.text)
+        if peso < melhor_peso:
+            melhor_peso = peso
+            melhor_recuo = recuo
+        if peso == 0.0:
+            break  # fim de frase: nao ha corte melhor
+
+    return melhor_recuo if melhor_peso < PROIBIDO else 0
+
+
 def _agrupar(palavras: Sequence[Word], regras: CueRules) -> list[list[Word]]:
     """Junta palavras em grupos que caibam numa legenda.
 
-    Fecha o grupo quando estourar caracteres, duracao, ou quando a pausa ate a
-    proxima palavra indicar fronteira de fala.
+    Fecha quando estourar caracteres ou duracao, quando a pausa indicar
+    fronteira de fala, ou ao fim de uma frase que nao tem como continuar.
     """
     grupos: list[list[Word]] = []
     atual: list[Word] = []
+
+    def fechar(ate: int = 0) -> None:
+        """Fecha o grupo atual, devolvendo `ate` palavras para o proximo."""
+        nonlocal atual
+        if not atual:
+            return
+        if ate > 0:
+            grupos.append(atual[:-ate])
+            atual = atual[-ate:]
+        else:
+            grupos.append(atual)
+            atual = []
 
     for indice, palavra in enumerate(palavras):
         atual.append(palavra)
@@ -107,37 +175,40 @@ def _agrupar(palavras: Sequence[Word], regras: CueRules) -> list[list[Word]]:
         texto = _texto(atual)
         duracao = atual[-1].end - atual[0].start
         pausa = (proxima.start - palavra.end) if proxima else float("inf")
-
-        estourou_texto = len(texto) > regras.max_chars_per_cue
-        estourou_tempo = duracao > regras.max_duration
         fim_de_frase = palavra.text.endswith(_FIM_DE_FRASE)
 
-        if estourou_texto or estourou_tempo:
-            # Passou do limite COM esta palavra: fecha sem ela e recomeca por ela.
+        if len(texto) > regras.max_chars_per_cue or duracao > regras.max_duration:
+            # Estourou COM esta palavra: ela volta para o proximo grupo, e ainda
+            # recuamos ate uma fronteira que nao parta uma ideia ao meio.
             if len(atual) > 1:
-                grupos.append(atual[:-1])
-                atual = [palavra]
+                sobra = atual[:-1]
+                recuo = _recuar_para_boa_fronteira(sobra, palavra, regras)
+                grupos.append(sobra[: len(sobra) - recuo] if recuo else sobra)
+                atual = sobra[len(sobra) - recuo :] + [palavra] if recuo else [palavra]
             else:
-                grupos.append(atual)
-                atual = []
+                fechar()
             continue
 
         if proxima is None:
             continue
-        if pausa >= regras.hard_pause:
-            grupos.append(atual)
-            atual = []
-        elif pausa >= regras.pause_split and (fim_de_frase or len(texto) > 24):
-            # Pausa media so fecha se ja houver texto suficiente, senao vira
-            # legenda picotada de duas palavras.
-            grupos.append(atual)
-            atual = []
-        elif fim_de_frase and len(texto) >= 30:
-            grupos.append(atual)
-            atual = []
 
-    if atual:
-        grupos.append(atual)
+        # Nunca terminar a legenda separando preposicao, artigo ou simbolo do
+        # que vem depois.
+        if _fronteira_ruim(atual, proxima):
+            continue
+
+        if pausa >= regras.hard_pause:
+            fechar()
+        elif pausa >= regras.pause_split and (fim_de_frase or len(texto) > 24):
+            fechar()
+        elif fim_de_frase:
+            # Fim de frase fecha quando a proxima frase nao caberia junto -- e o
+            # que evita "beleza? Hoje a gente vai" numa legenda so.
+            restante = _texto([p for p in palavras[indice + 1 :][:12]])
+            if len(texto) + 1 + len(restante) > regras.max_chars_per_cue:
+                fechar()
+
+    fechar()
     return [g for g in grupos if g]
 
 
