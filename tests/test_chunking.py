@@ -5,6 +5,8 @@ sinteticas. O que se testa aqui e a decisao, nao a execucao.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from subtitler.core.silence import (
     MAX_SEGUNDOS,
     Silencio,
@@ -90,3 +92,75 @@ def test_duracao_zero_devolve_nada():
 def test_indices_sao_sequenciais():
     fatias = plan_chunks(3000.0, [])
     assert [f.indice for f in fatias] == list(range(len(fatias)))
+
+
+# --- O limiar de silencio numa live com jogo ao fundo ------------------------
+
+
+class _FfmpegFalso:
+    """Responde como o ffmpeg responderia para audio com fundo constante.
+
+    So encontra pausas quando o limiar desce o suficiente -- e o que acontece
+    numa live: o audio do jogo nunca deixa o sinal cair abaixo de -30 dB.
+    """
+
+    def __init__(self, limiar_que_funciona: float) -> None:
+        self.limiar_que_funciona = limiar_que_funciona
+        self.tentativas: list[float] = []
+
+    def __call__(self, binario, args):
+        limiar = float(
+            [a for a in args if "silencedetect" in a][0]
+            .split("noise=")[1]
+            .split("dB")[0]
+        )
+        self.tentativas.append(limiar)
+        if limiar > self.limiar_que_funciona:
+            return ""  # nada abaixo do limiar: nenhuma pausa encontrada
+        return "".join(
+            f"[silencedetect @ 0x0] silence_start: {i * 100}\n"
+            f"[silencedetect @ 0x0] silence_end: {i * 100 + 1.2} | "
+            f"silence_duration: 1.2\n"
+            for i in range(1, 6)
+        )
+
+
+def test_afrouxa_o_limiar_quando_o_fundo_nao_deixa_achar_pausa(monkeypatch):
+    """Sem isto, live com jogo ao fundo nao tinha UMA pausa para cortar.
+
+    E ai todo corte virava corte duro no relogio, com 2s de sobreposicao em
+    cada costura -- fonte de frase repetida e de fala perdida.
+    """
+    from subtitler.core import silence
+    from subtitler.core.ffmpeg_locator import Ferramentas
+
+    falso = _FfmpegFalso(limiar_que_funciona=-40.0)
+    monkeypatch.setattr(silence, "run", falso)
+
+    achados = silence.detect(Ferramentas("ffmpeg", "ffprobe"), Path("x.flac"))
+
+    assert len(achados) == 5, "devia ter achado as pausas ao afrouxar"
+    assert falso.tentativas == [-30.0, -40.0], "parou assim que achou o bastante"
+
+
+def test_audio_limpo_nao_afrouxa_a_toa(monkeypatch):
+    """Afrouxar sem precisar cortaria no meio de uma respiracao curta."""
+    from subtitler.core import silence
+    from subtitler.core.ffmpeg_locator import Ferramentas
+
+    falso = _FfmpegFalso(limiar_que_funciona=-30.0)
+    monkeypatch.setattr(silence, "run", falso)
+
+    silence.detect(Ferramentas("ffmpeg", "ffprobe"), Path("x.flac"))
+    assert falso.tentativas == [-30.0], "uma passada basta em audio limpo"
+
+
+def test_limiar_explicito_e_respeitado(monkeypatch):
+    from subtitler.core import silence
+    from subtitler.core.ffmpeg_locator import Ferramentas
+
+    falso = _FfmpegFalso(limiar_que_funciona=-50.0)
+    monkeypatch.setattr(silence, "run", falso)
+
+    silence.detect(Ferramentas("ffmpeg", "ffprobe"), Path("x.flac"), ruido_db=-35.0)
+    assert falso.tentativas == [-35.0], "quem pede um limiar quer aquele limiar"

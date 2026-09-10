@@ -77,26 +77,47 @@ def parse_silencedetect(stderr: str) -> list[Silencio]:
     return sorted(silencios, key=lambda s: s.start)
 
 
+#: Limiares tentados em ordem. O primeiro vale para audio limpo; os seguintes
+#: existem para live com jogo ou musica por baixo da voz, onde o fundo nunca
+#: deixa o sinal cair abaixo de -30 dB e o filtro nao acha pausa nenhuma.
+LIMIARES_DB = (-30.0, -40.0, -50.0)
+
+#: Abaixo disto consideramos que nao achamos pausa util e vale afrouxar.
+MINIMO_DE_SILENCIOS = 3
+
+
 def detect(
     ferramentas: Ferramentas,
     audio: Path,
-    ruido_db: float = -30.0,
+    ruido_db: Optional[float] = None,
     duracao_minima: float = 0.35,
 ) -> list[Silencio]:
     """Roda o filtro `silencedetect` e devolve os trechos de silencio.
 
     Quando encontra pouca coisa (fundo musical, ruido de sala), afrouxa o
     limiar: um audio sem silencio nenhum nao daria onde cortar.
+
+    Esse afrouxamento estava descrito aqui mas nunca foi implementado -- rodava
+    uma vez a -30 dB e desistia. Numa live com o jogo ao fundo isso devolvia
+    zero pausas, e entao TODO corte virava corte duro no relogio, com 2s de
+    sobreposicao em cada costura para o removedor de repeticao resolver
+    sozinho. Cada costura errada vira frase repetida ou fala perdida.
     """
-    stderr = run(
-        ferramentas.ffmpeg,
-        [
-            "-i", str(audio),
-            "-af", f"silencedetect=noise={ruido_db}dB:d={duracao_minima}",
-            "-f", "null", "-",
-        ],
-    )
-    return parse_silencedetect(stderr)
+    limiares = (ruido_db,) if ruido_db is not None else LIMIARES_DB
+    encontrados: list[Silencio] = []
+    for limiar in limiares:
+        stderr = run(
+            ferramentas.ffmpeg,
+            [
+                "-i", str(audio),
+                "-af", f"silencedetect=noise={limiar}dB:d={duracao_minima}",
+                "-f", "null", "-",
+            ],
+        )
+        encontrados = parse_silencedetect(stderr)
+        if len(encontrados) >= MINIMO_DE_SILENCIOS:
+            break
+    return encontrados
 
 
 def _melhor_silencio(

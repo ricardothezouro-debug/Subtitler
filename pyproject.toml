@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subtitler"
-version = "1.0.1"
+version = "1.0.2"
 description = "Transforma video ou audio em legendas prontas: SRT, VTT e TXT."
 requires-python = ">=3.9"
 dependencies = ["PySide6>=6.6"]

@@ -83,3 +83,42 @@ def test_escolha_explicita_do_usuario_vale_para_todas_as_fatias(tmp_path: Path):
 
     # a API respondeu "portuguese" toda vez; a escolha do usuario ganha
     assert cliente.idiomas_recebidos == ["en", "en", "en"]
+
+
+# --- A chave do cache -------------------------------------------------------
+
+
+def _job(tmp_path: Path, **kwargs) -> Job:
+    return Job(origem=tmp_path / "live.mp4", saida=tmp_path, **kwargs)
+
+
+def test_trocar_de_modelo_nao_reaproveita_a_transcricao_antiga(tmp_path: Path):
+    """Era isto que devolvia o resultado velho em dois segundos.
+
+    O usuario trocava para o modelo preciso, mandava rodar de novo, e o
+    pipeline achava as partes em cache -- gravadas pelo modelo anterior -- e
+    pulava a transcricao inteira. A opcao nova nao tinha efeito nenhum e nada
+    na tela dizia isso.
+    """
+    rapido = _job(tmp_path, modelo="whisper-large-v3-turbo")
+    preciso = _job(tmp_path, modelo="whisper-large-v3")
+    assert rapido.id != preciso.id
+
+
+def test_trocar_de_idioma_ou_de_termos_tambem_refaz(tmp_path: Path):
+    base = _job(tmp_path, idioma="auto")
+    assert base.id != _job(tmp_path, idioma="pt").id
+    assert base.id != _job(tmp_path, idioma="auto", prompt="Wo Long, DREDGE").id
+
+
+def test_mudar_so_o_formato_de_saida_reaproveita(tmp_path: Path):
+    """Gerar VTT depois do SRT nao pode custar uma transcricao nova."""
+    srt = _job(tmp_path, formatos=("srt",))
+    vtt = _job(tmp_path, formatos=("vtt", "txt"), txt_com_tempos=True)
+    assert srt.id == vtt.id
+
+
+def test_o_mesmo_pedido_continua_retomavel(tmp_path: Path):
+    """A retomada e o motivo do cache existir: cair na parte 12 de 18 e
+    continuar dali."""
+    assert _job(tmp_path, idioma="pt").id == _job(tmp_path, idioma="pt").id
